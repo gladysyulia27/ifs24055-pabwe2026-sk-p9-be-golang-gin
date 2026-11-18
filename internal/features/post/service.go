@@ -2,7 +2,6 @@ package post
 
 import (
 	"app/internal/database"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -40,7 +39,7 @@ func (r *Repository) uniqueSlug(title string, exclude uint) (string, error) {
 		base = "artikel"
 	}
 	slug := base
-	for i := 1; i < 1000; i++ {
+	for i := 1; ; i++ {
 		var n int64
 		q := r.db.Model(&database.Post{}).Where("slug = ?", slug)
 		if exclude > 0 {
@@ -54,7 +53,6 @@ func (r *Repository) uniqueSlug(title string, exclude uint) (string, error) {
 		}
 		slug = fmt.Sprintf("%s-%d", base, i+1)
 	}
-	return "", errors.New("could not create unique slug")
 }
 func (r *Repository) Create(uid uint, in Input) (database.Post, error) {
 	slug, e := r.uniqueSlug(in.Title, 0)

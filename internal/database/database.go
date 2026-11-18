@@ -33,7 +33,7 @@ type Post struct {
 	PublishedAt    *time.Time `json:"published_at"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
-	User           *User      `gorm:"foreignKey:UserID" json:"author,omitempty"`
+	User           *User      `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE;" json:"author,omitempty"`
 }
 
 func Connect(cfg *config.Config) (*gorm.DB, error) {

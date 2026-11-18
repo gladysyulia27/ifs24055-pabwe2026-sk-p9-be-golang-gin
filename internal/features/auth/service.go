@@ -53,10 +53,7 @@ func (s *authService) Register(req RegisterRequest) (*AuthResponse, error) {
 	if err := s.repo.Create(user); err != nil {
 		return nil, err
 	}
-	token, err := s.generateToken(user)
-	if err != nil {
-		return nil, err
-	}
+	token := s.generateToken(user)
 
 	return &AuthResponse{
 		Token: token,
@@ -81,10 +78,7 @@ func (s *authService) Login(req LoginRequest) (*AuthResponse, error) {
 		return nil, errors.New("invalid credentials")
 	}
 
-	token, err := s.generateToken(user)
-	if err != nil {
-		return nil, err
-	}
+	token := s.generateToken(user)
 
 	return &AuthResponse{
 		Token: token,
@@ -145,7 +139,7 @@ func (s *authService) UpdateProfile(userID uint, req UpdateProfileRequest) (*Use
 	}, nil
 }
 
-func (s *authService) generateToken(user *database.User) (string, error) {
+func (s *authService) generateToken(user *database.User) string {
 	claims := &middleware.Claims{
 		UserID:   user.ID,
 		Username: user.Username,
@@ -156,5 +150,6 @@ func (s *authService) generateToken(user *database.User) (string, error) {
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(s.jwtSecret))
+	signed, _ := token.SignedString([]byte(s.jwtSecret))
+	return signed
 }

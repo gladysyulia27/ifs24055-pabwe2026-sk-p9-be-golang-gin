@@ -30,7 +30,7 @@ func (r *Repository) Public(q, cat string) ([]database.Post, error) {
 	db := r.db.Preload("User").Where("is_published = true")
 	if q != "" {
 		like := "%" + q + "%"
-		db = db.Where("title ILIKE ? OR excerpt ILIKE ? OR content ILIKE ?", like, like, like)
+		db = db.Where("LOWER(title) LIKE LOWER(?) OR LOWER(excerpt) LIKE LOWER(?) OR LOWER(content) LIKE LOWER(?)", like, like, like)
 	}
 	if cat != "" && cat != "Semua" {
 		db = db.Where("category = ?", cat)
