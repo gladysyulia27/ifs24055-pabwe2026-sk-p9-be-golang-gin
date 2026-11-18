@@ -17,6 +17,9 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+func strPtr(s string) *string { return &s }
+func boolPtr(b bool) *bool    { return &b }
+
 func TestReadingTime(t *testing.T) {
 	if ReadingTime("") != 1 {
 		t.Fatal("empty article must have a one-minute minimum")
@@ -47,7 +50,11 @@ func TestArticleRepositoryAndHandlers(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := database.User{Username: "writer", Email: "writer@example.test", Password: "hashed", Role: "member"}
+	otherUser := database.User{Username: "other", Email: "other@example.test", Password: "hashed", Role: "member"}
 	if err = db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Create(&otherUser).Error; err != nil {
 		t.Fatal(err)
 	}
 	repo := NewRepository(db)
@@ -66,10 +73,10 @@ func TestArticleRepositoryAndHandlers(t *testing.T) {
 	if p2.Slug == p.Slug {
 		t.Fatal("slug must be unique")
 	}
-	// Test symbol-only title fallback to "artikel"
-	pSym, err := repo.Create(user.ID, Input{Title: "!!!", Category: "Umum", Content: "Body"})
-	if err != nil || pSym.Slug != "artikel" {
-		t.Fatalf("expected fallback slug 'artikel', got %s (%v)", pSym.Slug, err)
+	// Test symbol-only title fallback to "artikel" and empty category fallback to "Umum"
+	pSym, err := repo.Create(user.ID, Input{Title: "!!!", Category: "", Content: "Body"})
+	if err != nil || pSym.Slug != "artikel" || pSym.Category != "Umum" {
+		t.Fatalf("expected fallback slug 'artikel' and category 'Umum', got %+v (%v)", pSym, err)
 	}
 
 	mine, err := repo.ListMine(user.ID)
@@ -80,15 +87,37 @@ func TestArticleRepositoryAndHandlers(t *testing.T) {
 	if err != nil || got.ID != p.ID {
 		t.Fatalf("get mine: %v", err)
 	}
-	updated, err := repo.Update(user.ID, p.ID, Input{Title: "Updated title", Category: "Opini", Content: "Updated body"})
-	if err != nil {
-		t.Fatal(err)
+	// Forbidden when another user accesses
+	if _, err := repo.GetMine(otherUser.ID, p.ID); err != ErrForbidden {
+		t.Fatalf("expected ErrForbidden, got %v", err)
 	}
-	if !updated.IsPublished || updated.PublishedAt == nil {
-		t.Fatal("content update must preserve existing publication state")
+
+	updated, err := repo.Update(user.ID, p.ID, UpdateInput{
+		Title:          strPtr("Updated title"),
+		Category:       strPtr(""),
+		Excerpt:        strPtr("New excerpt"),
+		Content:        strPtr("Updated body"),
+		CoverImagePath: strPtr("/img.png"),
+		IsPublished:    boolPtr(false),
+	})
+	if err != nil || updated.Category != "Umum" || updated.IsPublished {
+		t.Fatalf("update failed: %+v, %v", updated, err)
 	}
+	// Re-publish via Update
+	updated, err = repo.Update(user.ID, p.ID, UpdateInput{
+		Category:    strPtr("Opini"),
+		IsPublished: boolPtr(true),
+	})
+	if err != nil || !updated.IsPublished || updated.PublishedAt == nil {
+		t.Fatalf("re-publish via update failed: %+v, %v", updated, err)
+	}
+	// Invalid UpdateInput (empty title)
+	if _, err := repo.Update(user.ID, p.ID, UpdateInput{Title: strPtr("   ")}); err != ErrInvalidInput {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+
 	stats, err := repo.Stats(user.ID)
-	if err != nil || stats.Total != 3 || stats.Published != 2 || stats.Draft != 1 {
+	if err != nil || stats.Total != 3 || stats.Published != 2 || stats.Draft != 1 || stats.TotalArticles != 3 || stats.TotalSelesai != 2 || stats.BelumSelesai != 1 {
 		t.Fatalf("stats mismatch: %+v, %v", stats, err)
 	}
 	pub, err := repo.Public("", "Semua")
@@ -113,7 +142,7 @@ func TestArticleRepositoryAndHandlers(t *testing.T) {
 		t.Fatalf("toggle to published failed: %v", err)
 	}
 	users, err := repo.AdminUsers()
-	if err != nil || len(users) != 1 {
+	if err != nil || len(users) != 2 {
 		t.Fatalf("admin users failed: %v", err)
 	}
 	all, err := repo.AdminPosts()
@@ -133,9 +162,10 @@ func TestArticleRepositoryAndHandlers(t *testing.T) {
 
 	// HTTP Handler tests
 	h := NewHandler(repo)
+	currentUID := user.ID
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
-		c.Set("userID", user.ID)
+		c.Set("userID", currentUID)
 		c.Next()
 	})
 	r.GET("/public/posts", h.PublicList)
@@ -199,7 +229,7 @@ func TestArticleRepositoryAndHandlers(t *testing.T) {
 
 	idStr := strconv.Itoa(int(p2.ID))
 
-	// Detail (invalid ID, not found, valid)
+	// Detail (invalid ID, not found, forbidden, valid)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/posts/abc", nil))
 	if w.Code != http.StatusBadRequest {
@@ -210,13 +240,20 @@ func TestArticleRepositoryAndHandlers(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
+	currentUID = otherUser.ID
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/posts/"+idStr, nil))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+	currentUID = user.ID
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/posts/"+idStr, nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	// Update (invalid ID, bad JSON, not found, valid)
+	// Update (invalid ID, bad JSON, empty body 400, not found 404, forbidden 403, valid 200)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/posts/abc", bytes.NewReader(createBody)))
 	if w.Code != http.StatusBadRequest {
@@ -228,10 +265,22 @@ func TestArticleRepositoryAndHandlers(t *testing.T) {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
 	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/posts/"+idStr, bytes.NewBufferString("{}")))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on empty update body, got %d", w.Code)
+	}
+	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/posts/9999", bytes.NewReader(createBody)))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
+	currentUID = otherUser.ID
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/posts/"+idStr, bytes.NewReader(createBody)))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+	currentUID = user.ID
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/posts/"+idStr, bytes.NewReader(createBody)))
 	if w.Code != http.StatusOK {
@@ -301,7 +350,7 @@ func TestArticleRepositoryAndHandlers(t *testing.T) {
 			_ = tx.AddError(gorm.ErrInvalidDB)
 		}
 	})
-	_, _ = repo.Update(user.ID, pSym.ID, Input{Title: "Trigger Count Fail", Category: "Umum", Content: "Body"})
+	_, _ = repo.Update(user.ID, pSym.ID, UpdateInput{Title: strPtr("Trigger Count Fail")})
 	_ = db.Callback().Query().Remove("test:fail_on_count")
 
 	sqlDB, _ := db.DB()

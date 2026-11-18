@@ -2,30 +2,73 @@ package post
 
 import (
 	"app/internal/database"
+	"errors"
 	"gorm.io/gorm"
+)
+
+var (
+	ErrForbidden    = errors.New("forbidden: article belongs to another user")
+	ErrInvalidInput = errors.New("invalid article input")
 )
 
 type Repository struct{ db *gorm.DB }
 
 func NewRepository(db *gorm.DB) *Repository { return &Repository{db} }
+
+func toPublic(p database.Post) PublicPost {
+	out := PublicPost{
+		ID:             p.ID,
+		Title:          p.Title,
+		Slug:           p.Slug,
+		Category:       p.Category,
+		Excerpt:        p.Excerpt,
+		Content:        p.Content,
+		CoverImagePath: p.CoverImagePath,
+		IsPublished:    p.IsPublished,
+		PublishedAt:    p.PublishedAt,
+		CreatedAt:      p.CreatedAt,
+		UpdatedAt:      p.UpdatedAt,
+		ReadingTime:    ReadingTime(p.Content),
+	}
+	if p.User != nil {
+		out.Author = &PublicAuthor{
+			ID:        p.User.ID,
+			Username:  p.User.Username,
+			Email:     p.User.Email,
+			Role:      p.User.Role,
+			CreatedAt: p.User.CreatedAt,
+			UpdatedAt: p.User.UpdatedAt,
+		}
+	}
+	return out
+}
+
 func (r *Repository) ListMine(uid uint) ([]database.Post, error) {
 	var p []database.Post
 	e := r.db.Where("user_id = ?", uid).Order("updated_at desc").Find(&p).Error
 	return p, e
 }
+
 func (r *Repository) GetMine(uid, id uint) (database.Post, error) {
 	var p database.Post
-	e := r.db.Preload("User").Where("user_id = ? AND id = ?", uid, id).First(&p).Error
-	return p, e
-}
-func (r *Repository) Delete(uid, id uint) error {
-	res := r.db.Where("user_id = ? AND id = ?", uid, id).Delete(&database.Post{})
-	if res.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
+	if e := r.db.Preload("User").First(&p, id).Error; e != nil {
+		return p, e
 	}
-	return res.Error
+	if p.UserID != uid {
+		return p, ErrForbidden
+	}
+	return p, nil
 }
-func (r *Repository) Public(q, cat string) ([]database.Post, error) {
+
+func (r *Repository) Delete(uid, id uint) error {
+	p, e := r.GetMine(uid, id)
+	if e != nil {
+		return e
+	}
+	return r.db.Delete(&p).Error
+}
+
+func (r *Repository) Public(q, cat string) ([]PublicPost, error) {
 	var p []database.Post
 	db := r.db.Preload("User").Where("is_published = true")
 	if q != "" {
@@ -36,13 +79,19 @@ func (r *Repository) Public(q, cat string) ([]database.Post, error) {
 		db = db.Where("category = ?", cat)
 	}
 	e := db.Order("published_at desc").Find(&p).Error
-	return p, e
+	out := make([]PublicPost, 0, len(p))
+	for _, item := range p {
+		out = append(out, toPublic(item))
+	}
+	return out, e
 }
-func (r *Repository) PublicBySlug(slug string) (database.Post, error) {
+
+func (r *Repository) PublicBySlug(slug string) (PublicPost, error) {
 	var p database.Post
 	e := r.db.Preload("User").Where("slug = ? AND is_published = true", slug).First(&p).Error
-	return p, e
+	return toPublic(p), e
 }
+
 func (r *Repository) AdminUsers() ([]map[string]interface{}, error) {
 	var users []database.User
 	e := r.db.Order("id").Find(&users).Error
@@ -58,11 +107,13 @@ func (r *Repository) AdminUsers() ([]map[string]interface{}, error) {
 	}
 	return out, nil
 }
+
 func (r *Repository) AdminPosts() ([]database.Post, error) {
 	var p []database.Post
 	e := r.db.Preload("User").Order("created_at desc").Find(&p).Error
 	return p, e
 }
+
 func (r *Repository) AdminUserPosts(uid uint) ([]database.Post, error) {
 	var p []database.Post
 	e := r.db.Preload("User").Where("user_id = ?", uid).Order("created_at desc").Find(&p).Error

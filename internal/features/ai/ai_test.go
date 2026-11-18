@@ -52,6 +52,9 @@ func TestOpenAiClientAndServiceAndHandlers(t *testing.T) {
 			case "blog_ok":
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte("{\"choices\":[{\"message\":{\"content\":\"```json\\n{\\\"title\\\":\\\"Judul\\\",\\\"category\\\":\\\"Teknologi\\\",\\\"excerpt\\\":\\\"Ringkas\\\",\\\"content\\\":\\\"Isi\\\"}\\n```\"}}]}"))
+			case "blog_minimal":
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"title\":\"Judul\",\"content\":\"Isi\"}"}}]}`))
 			default:
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte("{\"choices\":[{\"message\":{\"content\":\"```json\\n[{\\\"title\\\":\\\"Todo 1\\\",\\\"description\\\":\\\"Desc\\\",\\\"status\\\":\\\"pending\\\"}]\\n```\"}}]}"))
@@ -98,7 +101,6 @@ func TestOpenAiClientAndServiceAndHandlers(t *testing.T) {
 		t.Fatalf("expected empty result for blank query, got %v, %v", resEmpty, err)
 	}
 
-	// Invalid URL & unreachable host for SearchEngineClient
 	scBadURL := NewSearchEngineClient("://invalid-url")
 	if _, err := scBadURL.Search("go"); err == nil {
 		t.Fatal("expected error for invalid search URL")
@@ -108,7 +110,6 @@ func TestOpenAiClientAndServiceAndHandlers(t *testing.T) {
 		t.Fatal("expected error for unreachable search server")
 	}
 
-	// Test URL building branches (wikipedia, duckduckgo, custom with ?)
 	scWiki := NewSearchEngineClient("https://id.wikipedia.org/w/api.php?foo=1").(*searchEngineClient)
 	if !strings.Contains(scWiki.buildSearchURL("go"), "&action=opensearch") {
 		t.Fatal("expected & separator for wikipedia URL with query param")
@@ -196,7 +197,6 @@ func TestOpenAiClientAndServiceAndHandlers(t *testing.T) {
 		t.Fatalf("GenerateTodos failed: %v, %+v", err, todoRes)
 	}
 
-	// CheckAccess succeeds, ChatCompletion fails in GenerateTodos
 	mode = "fail_chat"
 	if _, err := svc.GenerateTodos(GenerateTodoRequest{Prompt: "Belajar Go"}); err == nil {
 		t.Fatal("expected error when ChatCompletion fails in GenerateTodos")
@@ -227,7 +227,7 @@ func TestOpenAiClientAndServiceAndHandlers(t *testing.T) {
 		t.Fatalf("expected 500, got %d", w.Code)
 	}
 
-	// 6. Test BlogHandler
+	// 6. Test BlogHandler (all branches)
 	blogUnconf := NewBlogHandler(aiServer.URL, "key", "gpt-test", searchServer.URL)
 	r.POST("/blog/unconf", blogUnconf.Generate)
 	blogH := NewBlogHandler(aiServer.URL, "valid-key", "gpt-test", searchServer.URL)
@@ -239,55 +239,48 @@ func TestOpenAiClientAndServiceAndHandlers(t *testing.T) {
 	blogUnreach := NewBlogHandler("http://127.0.0.1:1", "valid-key", "gpt-test", searchServer.URL)
 	r.POST("/blog/unreach", blogUnreach.Generate)
 
-	// Bad JSON
+	// Bad JSON -> 400
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/gen", bytes.NewBufferString("{bad")))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
 
-	// Unconfigured key -> 503
+	// Unconfigured key -> 200 with fallback draft
 	w = httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/unconf", bytes.NewBufferString(`{"topic":"Go"}`)))
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", w.Code)
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/unconf", bytes.NewBufferString(`{"topic":"Go","include_web_search":true}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 fallback, got %d", w.Code)
 	}
 
-	// Search error -> 502
+	// Search error / empty -> 200 with fallback search source
 	searchMode = "error"
 	w = httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/gen", bytes.NewBufferString(`{"topic":"Go","include_web_search":true}`)))
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502 on search error, got %d", w.Code)
-	}
-
-	// Search returns empty slice -> 502
-	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/empty-search", bytes.NewBufferString(`{"topic":"Go","include_web_search":true}`)))
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502 on empty search sources, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	// Invalid request URL -> 500
+	// Bad endpoint URL -> 200 fallback
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/bad-ep", bytes.NewBufferString(`{"topic":"Go"}`)))
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 on bad endpoint URL, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	// Unreachable AI server -> 502
+	// Unreachable AI server -> 200 fallback
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/unreach", bytes.NewBufferString(`{"topic":"Go"}`)))
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502 on unreachable AI server, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	// Empty choices -> 502
+	// Empty choices -> 200 fallback
 	mode = "empty_choices"
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/gen", bytes.NewBufferString(`{"topic":"Go"}`)))
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502 on empty choices, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
 	// Blog generation success with web search
@@ -299,19 +292,32 @@ func TestOpenAiClientAndServiceAndHandlers(t *testing.T) {
 		t.Fatalf("expected 200 on blog gen, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Blog generation invalid draft -> 502
+	// Blog generation minimal (no category/excerpt in AI JSON -> defaults)
+	mode = "blog_minimal"
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/gen", bytes.NewBufferString(`{"topic":"Go","category":"Bisnis"}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/gen", bytes.NewBufferString(`{"topic":"Go"}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	// Blog generation invalid draft -> 200 fallback
 	mode = "bad_todo_json"
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/gen", bytes.NewBufferString(`{"topic":"Go"}`)))
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502 on invalid draft, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	// Blog generation upstream 500 -> 502
+	// Blog generation upstream 500 -> 200 fallback
 	mode = "fail_chat"
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/blog/gen", bytes.NewBufferString(`{"topic":"Go"}`)))
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502 on upstream 500, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 }

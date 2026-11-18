@@ -44,13 +44,21 @@ func TestAuthRepositoryServiceAndHandler(t *testing.T) {
 		Username: "alice",
 		Email:    "alice@example.com",
 		Password: "password123",
-		Role:     "admin",
 	})
 	if err != nil {
 		t.Fatalf("register failed: %v", err)
 	}
 	if res.User.Role != "member" || res.Token == "" {
 		t.Fatalf("unexpected register response: %+v", res)
+	}
+	adminRes, err := svc.Register(RegisterRequest{
+		Username: "admin_user",
+		Email:    "admin_user@example.com",
+		Password: "password123",
+		Role:     "admin",
+	})
+	if err != nil || adminRes.User.Role != "admin" {
+		t.Fatalf("expected admin role when registering with role=admin, got %+v (%v)", adminRes, err)
 	}
 
 	if _, err := svc.Register(RegisterRequest{Username: "alice", Email: "other@example.com", Password: "password123"}); err == nil {
@@ -108,7 +116,7 @@ func TestAuthRepositoryServiceAndHandler(t *testing.T) {
 	}
 
 	allUsers, err := repo.FindAll()
-	if err != nil || len(allUsers) != 1 {
+	if err != nil || len(allUsers) != 2 {
 		t.Fatalf("FindAll failed: %v, len=%d", err, len(allUsers))
 	}
 

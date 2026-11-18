@@ -47,6 +47,11 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 	if e != nil {
 		return nil, fmt.Errorf("database connection: %w", e)
 	}
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxIdleConns(5)
+		sqlDB.SetMaxOpenConns(20)
+		sqlDB.SetConnMaxLifetime(5 * time.Minute)
+	}
 	return db, nil
 }
 func ConnectTest() (*gorm.DB, error) {

@@ -2,6 +2,7 @@ package post
 
 import (
 	"app/internal/response"
+	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strconv"
@@ -15,6 +16,19 @@ func id(c *gin.Context) (uint, bool) {
 	v, e := strconv.ParseUint(c.Param("id"), 10, 64)
 	return uint(v), e == nil
 }
+
+func respondPostErr(c *gin.Context, e error, defaultMsg string) {
+	if errors.Is(e, ErrForbidden) {
+		response.Fail(c, http.StatusForbidden, e.Error())
+		return
+	}
+	if errors.Is(e, ErrInvalidInput) {
+		response.Fail(c, http.StatusBadRequest, e.Error())
+		return
+	}
+	response.Fail(c, http.StatusNotFound, defaultMsg)
+}
+
 func (h *Handler) PublicList(c *gin.Context) {
 	v, e := h.repo.Public(c.Query("q"), c.Query("category"))
 	if e != nil {
@@ -23,14 +37,16 @@ func (h *Handler) PublicList(c *gin.Context) {
 	}
 	response.Success(c, 200, "Articles retrieved", v)
 }
+
 func (h *Handler) PublicDetail(c *gin.Context) {
 	v, e := h.repo.PublicBySlug(c.Param("slug"))
 	if e != nil {
 		response.Fail(c, 404, "Article not found")
 		return
 	}
-	response.Success(c, 200, "Article retrieved", gin.H{"post": v, "reading_time": ReadingTime(v.Content)})
+	response.Success(c, 200, "Article retrieved", v)
 }
+
 func (h *Handler) List(c *gin.Context) {
 	v, e := h.repo.ListMine(uid(c))
 	if e != nil {
@@ -39,6 +55,7 @@ func (h *Handler) List(c *gin.Context) {
 	}
 	response.Success(c, 200, "Articles retrieved", v)
 }
+
 func (h *Handler) Stats(c *gin.Context) {
 	v, e := h.repo.Stats(uid(c))
 	if e != nil {
@@ -47,6 +64,7 @@ func (h *Handler) Stats(c *gin.Context) {
 	}
 	response.Success(c, 200, "Stats retrieved", v)
 }
+
 func (h *Handler) Detail(c *gin.Context) {
 	n, ok := id(c)
 	if !ok {
@@ -55,11 +73,12 @@ func (h *Handler) Detail(c *gin.Context) {
 	}
 	v, e := h.repo.GetMine(uid(c), n)
 	if e != nil {
-		response.Fail(c, 404, "Article not found")
+		respondPostErr(c, e, "Article not found")
 		return
 	}
 	response.Success(c, 200, "Article retrieved", v)
 }
+
 func (h *Handler) Create(c *gin.Context) {
 	var in Input
 	if e := c.ShouldBindJSON(&in); e != nil {
@@ -73,24 +92,26 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	response.Success(c, 201, "Article created", v)
 }
+
 func (h *Handler) Update(c *gin.Context) {
 	n, ok := id(c)
 	if !ok {
 		response.Fail(c, 400, "Invalid article ID")
 		return
 	}
-	var in Input
+	var in UpdateInput
 	if e := c.ShouldBindJSON(&in); e != nil {
 		response.Fail(c, 400, e.Error())
 		return
 	}
 	v, e := h.repo.Update(uid(c), n, in)
 	if e != nil {
-		response.Fail(c, 404, "Article not found or could not be updated")
+		respondPostErr(c, e, "Article not found or could not be updated")
 		return
 	}
 	response.Success(c, 200, "Article updated", v)
 }
+
 func (h *Handler) Toggle(c *gin.Context) {
 	n, ok := id(c)
 	if !ok {
@@ -99,11 +120,12 @@ func (h *Handler) Toggle(c *gin.Context) {
 	}
 	v, e := h.repo.Toggle(uid(c), n)
 	if e != nil {
-		response.Fail(c, 404, "Article not found")
+		respondPostErr(c, e, "Article not found")
 		return
 	}
 	response.Success(c, 200, "Publication status updated", v)
 }
+
 func (h *Handler) Delete(c *gin.Context) {
 	n, ok := id(c)
 	if !ok {
@@ -111,11 +133,12 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 	if e := h.repo.Delete(uid(c), n); e != nil {
-		response.Fail(c, 404, "Article not found")
+		respondPostErr(c, e, "Article not found")
 		return
 	}
 	response.Success(c, 200, "Article deleted")
 }
+
 func (h *Handler) AdminUsers(c *gin.Context) {
 	v, e := h.repo.AdminUsers()
 	if e != nil {
@@ -124,6 +147,7 @@ func (h *Handler) AdminUsers(c *gin.Context) {
 	}
 	response.Success(c, 200, "Users retrieved", v)
 }
+
 func (h *Handler) AdminPosts(c *gin.Context) {
 	v, e := h.repo.AdminPosts()
 	if e != nil {
@@ -132,6 +156,7 @@ func (h *Handler) AdminPosts(c *gin.Context) {
 	}
 	response.Success(c, 200, "Posts retrieved", v)
 }
+
 func (h *Handler) AdminUserPosts(c *gin.Context) {
 	n, e := strconv.ParseUint(c.Param("id"), 10, 64)
 	if e != nil {
