@@ -1,0 +1,6 @@
+.env
+/server
+/main
+/app
+*.exe
+coverage.out
